@@ -90,7 +90,11 @@ for civic in GameInfo.Civics() do
     if cu:HasCivic(civic.Index) then completedCivics = completedCivics + 1 end
 end
 print("COMPLETED|" .. completedTechs .. "|" .. completedCivics)
-local curEra = Game.GetEras():GetCurrentEra()
+-- Base game has no era manager: fall back to the player's own era
+local curEra = nil
+pcall(function() curEra = Game.GetEras():GetCurrentEra() end)
+if curEra == nil then pcall(function() curEra = Players[id]:GetEra() end) end
+if curEra == nil then curEra = 0 end
 local prereqs = {}
 for row in GameInfo.CivicPrereqs() do
     if not prereqs[row.Civic] then prereqs[row.Civic] = {} end

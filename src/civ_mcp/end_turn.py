@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING
 
 import civ_mcp.narrate as nr
 from civ_mcp import lua as lq
+from civ_mcp import modes
 from civ_mcp.connection import LuaError
-from civ_mcp.game_lifecycle import cleanup_old_autosaves, save_game
+from civ_mcp.game_lifecycle import cleanup_old_autosaves, dismiss_advisor, save_game
 
 if TYPE_CHECKING:
     from civ_mcp.game_state import GameState
@@ -489,6 +490,15 @@ def _check_save_scumming(gs: GameState) -> tuple[list[lq.TurnEvent], bool]:
     return events, False
 
 
+async def _close_advisor(gs: GameState) -> bool:
+    """Close the tutorial advisor popup if it is up. Never raises."""
+    try:
+        return await dismiss_advisor(gs.conn)
+    except Exception:
+        log.debug("Advisor dismiss failed", exc_info=True)
+        return False
+
+
 async def execute_end_turn(gs: GameState) -> str:
     """End the turn with snapshot-diff event detection."""
     # 0a. Run aborted due to save scumming — refuse to advance
@@ -553,6 +563,8 @@ async def execute_end_turn(gs: GameState) -> str:
             log.info("Pre-turn popup dismissed: %s", pre_dismiss)
     except Exception:
         log.debug("Pre-turn dismiss failed", exc_info=True)
+    # The tutorial advisor holds an engine event while it is up: nothing advances until it closes
+    await _close_advisor(gs)
 
     # 2b. World Congress gate — if WC fires this turn and no handler is
     #     registered, block end_turn and tell the agent to vote first.
@@ -1164,7 +1176,7 @@ async def execute_end_turn(gs: GameState) -> str:
     advanced = False
 
     # Phase 1: Quick check (4s) — turn sometimes advances within 1-2s
-    for _ in range(8):
+    for _i in range(8):
         await asyncio.sleep(0.5)
         turn_after = await _get_turn_number(gs)
         if (
@@ -1174,6 +1186,9 @@ async def execute_end_turn(gs: GameState) -> str:
         ):
             advanced = True
             break
+        # An advisor popup raised during another player's turn freezes turn processing
+        if _i % 2 == 1:
+            await _close_advisor(gs)
 
     # Phase 2: Slow polling (5 min) — AI can take 1-5 min on large maps,
     # especially during wars with many units. GameCore-only queries.
@@ -1225,6 +1240,8 @@ async def execute_end_turn(gs: GameState) -> str:
             ):
                 advanced = True
                 break
+            # Same check while waiting: this runs in the popup's own Lua state, not InGame
+            await _close_advisor(gs)
             # Check for game-over during longer polling intervals.
             # An opponent victory (Science, Culture, etc.) fires during
             # their turn — without this we'd wait the full 9-min timeout.
@@ -1391,6 +1408,28 @@ async def execute_end_turn(gs: GameState) -> str:
         # No blockers, no diplomacy, no game over — true AI turn hang.
         # Return structured HANG: prefix so server.py can auto-recover.
         turn_num = turn_after or turn_before
+        if modes.MODE:
+            # A human is at the game: report and stop. Never kill and reload their game.
+            whose = ""
+            try:
+                who_lines = await gs.conn.execute_read(
+                    "local me = Game.GetLocalPlayer(); "
+                    'print(Players[me]:IsTurnActive() and "LOCAL_ACTIVE" or "LOCAL_DONE"); '
+                    f'print("{lq.SENTINEL}")'
+                )
+                if any("LOCAL_ACTIVE" in l for l in who_lines):
+                    whose = "游戏里仍然是玩家自己的回合（结束回合的请求没有生效，可能有界面上的提示没处理）。"
+                elif any("LOCAL_DONE" in l for l in who_lines):
+                    whose = "玩家的回合已经结束，游戏停在其他文明的回合处理上。"
+            except Exception:
+                log.debug("Turn-owner probe failed", exc_info=True)
+            return (
+                f"回合没有推进：已请求结束第 {turn_num} 回合，等了大约 10 分钟仍停在第 {turn_num} 回合。{whose}"
+                "没有检测到阻塞项、外交界面或弹窗。**没有重启游戏，也没有读档。**"
+                "不要再重复调用 end_turn。停下来把情况告诉玩家，请玩家看一眼游戏画面："
+                "有没有需要手动点掉的窗口（比如顾问提示），或者手动点一下“下一回合”。"
+                "玩家处理后再用 get_game_overview 确认回合数。"
+            )
         if turn_num is not None:
             from .autosave import get_autosave_for_turn
 

@@ -45,7 +45,9 @@ for i, u in p:GetUnits():Members() do
     end
 end
 local myScore = p:GetScore()
-local favor = p:GetFavor()
+-- Base game (no Gathering Storm) has no diplomatic favor
+local favor = 0
+pcall(function() favor = p:GetFavor() or 0 end)
 local favorPerTurn = 0
 local pDiplo = p:GetDiplomacy()
 -- 1. Government tier bonus (govRow.Tier is a string like "GOVERNMENT_TIER_1")
@@ -122,13 +124,21 @@ for i = 0, 62 do
 end
 local maxRel = math.floor(nMajors / 2) + 1
 print("RELSLOTS|" .. nReligions .. "|" .. maxRel)
-local eraManager = Game.GetEras()
-local eraIdx = eraManager:GetCurrentEra()
+-- Base game has no era manager / era score: fall back to the player's own era
+local eraIdx, eraScore, darkThresh, goldenThresh = -1, 0, 0, 0
+local okEra = pcall(function()
+    local eraManager = Game.GetEras()
+    eraIdx = eraManager:GetCurrentEra()
+    eraScore = eraManager:GetPlayerCurrentScore(id)
+    darkThresh = eraManager:GetPlayerDarkAgeThreshold(id)
+    goldenThresh = eraManager:GetPlayerGoldenAgeThreshold(id)
+end)
+if not okEra or eraIdx == nil or eraIdx < 0 then
+    eraIdx = -1
+    pcall(function() eraIdx = p:GetEra() end)
+end
 local eraEntry = GameInfo.Eras[eraIdx]
 local eraName = eraEntry and Locale.Lookup(eraEntry.Name) or "Unknown"
-local eraScore = eraManager:GetPlayerCurrentScore(id)
-local darkThresh = eraManager:GetPlayerDarkAgeThreshold(id)
-local goldenThresh = eraManager:GetPlayerGoldenAgeThreshold(id)
 print("ERA|" .. eraName .. "|" .. eraScore .. "|" .. darkThresh .. "|" .. goldenThresh)
 local maxTurns = GameConfiguration.GetValue("GAME_MAX_TURNS") or 0
 print("MAXTURNS|" .. maxTurns)
@@ -648,8 +658,9 @@ def build_rival_snapshot_query() -> str:
         "    local mil = st:GetMilitaryStrength() "
         "    local techs = st:GetNumTechsResearched() "
         "    local civics = st:GetNumCivicsCompleted() "
-        "    local sciVP = st:GetScienceVictoryPoints() "
-        "    local diploVP = st:GetDiplomaticVictoryPoints() "
+        "    local sciVP, diploVP = 0, 0 "
+        "    pcall(function() sciVP = st:GetScienceVictoryPoints() end) "
+        "    pcall(function() diploVP = st:GetDiplomaticVictoryPoints() end) "
         "    local faith = 0 "
         "    pcall(function() faith = p:GetReligion():GetFaithBalance() end) "
         '    local resStr = "" '
@@ -750,8 +761,13 @@ def build_diary_full_query() -> str:
     return (
         # --- Setup ---
         "local me = Game.GetLocalPlayer() "
-        "local eraManager = Game.GetEras() "
-        "local eraIdx = eraManager:GetCurrentEra() "
+        # Base game has no era manager: fall back to the local player's era
+        "local eraManager = nil "
+        "local eraIdx = -1 "
+        "pcall(function() eraManager = Game.GetEras() "
+        "eraIdx = eraManager:GetCurrentEra() end) "
+        "if eraIdx == nil or eraIdx < 0 then eraIdx = -1 "
+        "pcall(function() eraIdx = Players[me]:GetEra() end) end "
         "local eraEntry = GameInfo.Eras[eraIdx] "
         'local eraType = eraEntry and eraEntry.EraType or "UNKNOWN" '
         # Pre-compute territory, improvement, and exploration counts per player
@@ -824,8 +840,9 @@ def build_diary_full_query() -> str:
         "  local mil = st:GetMilitaryStrength() "
         "  local techsN = st:GetNumTechsResearched() "
         "  local civicsN = st:GetNumCivicsCompleted() "
-        "  local sciVP = st:GetScienceVictoryPoints() "
-        "  local diploVP = st:GetDiplomaticVictoryPoints() "
+        "  local sciVP, diploVP = 0, 0 "
+        "  pcall(function() sciVP = st:GetScienceVictoryPoints() end) "
+        "  pcall(function() diploVP = st:GetDiplomaticVictoryPoints() end) "
         "  local tourism = st:GetTourism() "
         "  local relCities = st:GetNumCitiesFollowingReligion() "
         "  local stay = 0 "
@@ -1186,8 +1203,9 @@ def build_diary_full_query() -> str:
         "end "
         'print("ACS|" .. suzCount .. "|" .. envoysAvail .. "|" .. envoyStr) '
         # Governors
-        "local pGovs = Players[me]:GetGovernors() "
-        "if pGovs then "
+        "local pGovs = nil "
+        "pcall(function() pGovs = Players[me]:GetGovernors() end) "
+        "if pGovs and GameInfo.Governors then "
         "  for gRow in GameInfo.Governors() do "
         "    local ok, hasGov = pcall(function() "
         "      return pGovs:HasGovernor(gRow.Hash) end) "

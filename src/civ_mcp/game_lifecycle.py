@@ -10,6 +10,51 @@ from civ_mcp.connection import GameConnection
 log = logging.getLogger(__name__)
 
 
+async def dismiss_advisor(conn: GameConnection) -> bool:
+    """Close the tutorial advisor popup if it is showing. Returns True if one was closed.
+
+    The advisor (Options > Game > Tutorial/Advisor, on by default for new players)
+    takes a hold on the current engine event while it is on screen
+    (AdvisorPopup.lua: UI.ReferenceCurrentEvent), so AI turn processing waits
+    until someone clicks it away. It can come up during another player's turn,
+    after our end-turn request, which looks exactly like a hung AI turn.
+    Close() has to run in the popup's own Lua state to release that hold.
+    """
+    states = [idx for idx, n in conn.lua_states.items() if n == "AdvisorPopup"]
+    if not states:
+        # State list comes from the handshake; refresh once (per connection object)
+        # in case it predates the game load. Not every poll: reconnecting is slow.
+        if getattr(conn, "_advisor_state_refreshed", False):
+            return False
+        conn._advisor_state_refreshed = True
+        try:
+            await conn.reconnect()
+        except Exception:
+            return False
+        states = [idx for idx, n in conn.lua_states.items() if n == "AdvisorPopup"]
+    closed = False
+    for state_idx in states:
+        for _drain in range(10):  # queued advisors show one after another
+            try:
+                lines = await conn.execute_in_state(
+                    state_idx,
+                    "if not ContextPtr:IsHidden() then "
+                    "  pcall(Close); "
+                    '  print("DISMISSED") '
+                    "end; "
+                    'print("---END---")',
+                )
+            except Exception as e:
+                log.debug("Advisor check failed (state %d): %s", state_idx, e)
+                break
+            if not any("DISMISSED" in l for l in lines):
+                break
+            closed = True
+    if closed:
+        log.info("Closed the tutorial advisor popup (it was holding up turn processing)")
+    return closed
+
+
 async def dismiss_popup(conn: GameConnection) -> str:
     """Dismiss any blocking popup or UI overlay in the game.
 

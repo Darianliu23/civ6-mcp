@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from civ_mcp import modes
+
 if TYPE_CHECKING:
     from civ_mcp.connection import GameConnection
 
@@ -166,6 +168,9 @@ class CameraController:
     async def _run(self) -> None:
         while True:
             event = await self._queue.get()
+            # Human-attended modes: never reopen the tuner connection just to move the camera
+            if not modes.active():
+                continue
             # Hold until diplomacy screen closes.
             while True:
                 try:
@@ -231,6 +236,10 @@ class PopupWatcher:
 
         while True:
             await asyncio.sleep(POPUP_POLL_INTERVAL)
+            # Human-attended modes: only watch popups while the AI is actually playing
+            if not modes.active():
+                first_seen = None
+                continue
             _iteration += 1
             try:
                 status = await self._poll()

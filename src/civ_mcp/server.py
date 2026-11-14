@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 import uvicorn
 from mcp.server.fastmcp import Context, FastMCP
 
-from civ_mcp import game_launcher, heartbeat
+from civ_mcp import game_launcher, heartbeat, modes
 from civ_mcp.game_over_watchdog import GameOverWatchdog
 from civ_mcp import narrate as nr
 from civ_mcp.connection import GameConnection, LuaError
@@ -326,16 +326,31 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     camera = CameraController(conn)
     popup_watcher = PopupWatcher(conn)
     watchdog = GameOverWatchdog(gs, logger)
-    camera.start()
-    popup_watcher.start()
+    # With a human at the game (CIV_MCP_MODE) some of these stay off: see modes.py
+    if modes.CAMERA:
+        camera.start()
+    if modes.POPUP_WATCHER:
+        popup_watcher.start()
     watchdog.start()
+    # Several sessions may each run a server; only one can hold the tuner, so let go when idle
+    idle_task = (
+        asyncio.create_task(modes.idle_release_loop(conn), name="idle-release")
+        if modes.MODE
+        else None
+    )
 
     # Start the web dashboard API as a background task (port 8000)
-    web_app = create_app(gs)
-    uvi_config = uvicorn.Config(web_app, host="0.0.0.0", port=8000, log_level="info")
-    uvi_server = uvicorn.Server(uvi_config)
-    api_task = asyncio.create_task(uvi_server.serve())
-    log.info("Web API starting on http://0.0.0.0:8000")
+    uvi_server = None
+    api_task = None
+    if modes.WEB_API:
+        web_app = create_app(gs)
+        # Bind to localhost only: the dashboard has no auth and need not be on the LAN
+        uvi_config = uvicorn.Config(
+            web_app, host="127.0.0.1", port=8000, log_level="info"
+        )
+        uvi_server = uvicorn.Server(uvi_config)
+        api_task = asyncio.create_task(uvi_server.serve())
+        log.info("Web API starting on http://127.0.0.1:8000")
 
     try:
         yield AppContext(
@@ -352,8 +367,11 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         await watchdog.stop()
         await camera.stop()
         await popup_watcher.stop()
-        uvi_server.should_exit = True
-        await api_task
+        if idle_task is not None:
+            idle_task.cancel()
+        if uvi_server is not None and api_task is not None:
+            uvi_server.should_exit = True
+            await api_task
         await conn.disconnect()
 
 
@@ -416,6 +434,33 @@ async def _logged(
     tiles: set[tuple[int, int]] | None = None,
 ) -> str:
     """Run a tool function with timing, error handling, and logging."""
+    # Player has taken over: refuse anything that would change the game
+    refusal = modes.gate(tool_name)
+    if refusal:
+        return refusal
+    # Mark the call in flight so the idle watcher keeps the tuner connection open
+    modes.enter()
+    try:
+        result = await _logged_inner(ctx, tool_name, params, fn, tiles=tiles)
+    finally:
+        modes.leave()
+    if modes.MODE and isinstance(result, str) and result.startswith("Cannot connect"):
+        result += (
+            "\n（连不上游戏。可能的原因：游戏没开或没打开 Tuner；还停在主菜单没进对局；"
+            f"或者另一个文明6 会话刚用过游戏连接，等 {int(modes.IDLE_RELEASE_SECONDS)} 秒左右再试。"
+            "游戏同一时间只接受一个连接。）"
+        )
+    return result
+
+
+async def _logged_inner(
+    ctx: Context,
+    tool_name: str,
+    params: dict[str, Any],
+    fn: Callable[[], Awaitable[str]],
+    *,
+    tiles: set[tuple[int, int]] | None = None,
+) -> str:
     logger = _get_logger(ctx)
     turn = logger._turn or "?"
     start = time.monotonic()
@@ -450,7 +495,8 @@ async def _logged(
         # Connection-loss recovery: after consecutive failures,
         # the game has likely crashed. Auto-restart from autosave.
         _logged._conn_errors = getattr(_logged, "_conn_errors", 0) + 1
-        if _logged._conn_errors >= 5:
+        # Never kill and reload the game while a human is playing it
+        if _logged._conn_errors >= 5 and modes.ALLOW_AUTO_RESTART:
             log.error(
                 "CONNECTION RECOVERY: %d consecutive connection failures "
                 "— triggering restart_and_load",
@@ -1948,7 +1994,12 @@ async def end_turn(
     _MAX_HANG_RETRIES = 3
     _HANG_EXTRA_WAIT = [0, 15, 30]  # extra seconds before retry per attempt
 
-    if result.startswith("HANG:") and not gs._hang_retry_active:
+    # Recovery kills the game and reloads a save: only for unattended runs
+    if (
+        result.startswith("HANG:")
+        and not gs._hang_retry_active
+        and modes.ALLOW_AUTO_RESTART
+    ):
         parts = result.split("|", 1)
         hang_info = parts[
             0
@@ -2919,5 +2970,8 @@ def main():
 
     if os.environ.get("CIV_MCP_DISABLE_LUA"):
         mcp._tool_manager.remove_tool("run_lua")
+
+    # CIV_MCP_MODE=auto|advisor|coop: trim tools and set instructions for a human-attended game
+    modes.apply(mcp)
 
     mcp.run(transport="stdio")

@@ -96,9 +96,11 @@ for i = 0, 62 do
             local cfg = PlayerConfigurations[i]
             local name = Locale.Lookup(cfg:GetCivilizationShortDescription())
             local st = p:GetStats()
-            local sciVP = st:GetScienceVictoryPoints()
-            local sciNeeded = st:GetScienceVictoryPointsTotalNeeded()
-            local diploVP = st:GetDiplomaticVictoryPoints()
+            -- Victory points are Gathering Storm only
+            local sciVP, sciNeeded, diploVP = 0, 0, 0
+            pcall(function() sciVP = st:GetScienceVictoryPoints() end)
+            pcall(function() sciNeeded = st:GetScienceVictoryPointsTotalNeeded() end)
+            pcall(function() diploVP = st:GetDiplomaticVictoryPoints() end)
             local tourism = st:GetTourism()
             local milStr = st:GetMilitaryStrength()
             local techs = st:GetNumTechsResearched()

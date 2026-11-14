@@ -9,7 +9,7 @@ telemetry pipeline still detect the outcome.
 import asyncio
 import logging
 
-from civ_mcp import heartbeat
+from civ_mcp import heartbeat, modes
 from civ_mcp.game_state import GameState
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,9 @@ class GameOverWatchdog:
         await self._armed.wait()
         while True:
             await asyncio.sleep(INTERVAL)
+            # Human-attended modes: do not reopen the tuner connection while idle
+            if not modes.active():
+                continue
             try:
                 result = await self._gs.check_game_over()
                 if result is None:

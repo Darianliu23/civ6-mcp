@@ -11,6 +11,7 @@ def build_world_congress_query() -> str:
     return f"""
 local me = Game.GetLocalPlayer()
 local pDiplo = Players[me]:GetDiplomacy()
+if not Game.GetWorldCongress then {_bail("ERR:DLC_REQUIRED|The World Congress is not part of this game (requires the Gathering Storm expansion). Skip World Congress actions.")} end
 local wc = Game.GetWorldCongress()
 if not wc then {_bail("ERR:NO_WORLD_CONGRESS|World Congress not available yet")} end
 local inSession = wc:IsInSession()

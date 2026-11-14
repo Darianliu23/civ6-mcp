@@ -156,7 +156,9 @@ def build_governors_query() -> str:
     """Read governor status, appointed governors, and available types (InGame context)."""
     return """
 local me = Game.GetLocalPlayer()
-local pGovs = Players[me]:GetGovernors()
+local pGovs = nil
+pcall(function() pGovs = Players[me]:GetGovernors() end)
+if not pGovs or not GameInfo.Governors then print("ERR:DLC_REQUIRED|Governors are not part of this game (requires the Rise and Fall or Gathering Storm expansion). Skip governor actions."); print("{SENTINEL}"); return end
 local pts = pGovs:GetGovernorPoints()
 local spent = pGovs:GetGovernorPointsSpent()
 local canAppoint = pGovs:CanAppoint() and "1" or "0"
@@ -549,7 +551,9 @@ def build_dedications_query() -> str:
     """Read current era age, available dedications, and active ones."""
     return """
 local me = Game.GetLocalPlayer()
-local pEras = Game.GetEras()
+local pEras = nil
+local okEras = pcall(function() pEras = Game.GetEras(); local _ = pEras:HasGoldenAge(me) end)
+if not okEras or not pEras then print("ERR:DLC_REQUIRED|Ages and dedications are not part of this game (requires the Rise and Fall or Gathering Storm expansion). Skip dedication actions."); print("{SENTINEL}"); return end
 local age = "Normal"
 if pEras:HasHeroicGoldenAge(me) then age = "Heroic"
 elseif pEras:HasGoldenAge(me) then age = "Golden"

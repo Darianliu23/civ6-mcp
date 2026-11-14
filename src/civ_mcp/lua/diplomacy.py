@@ -37,7 +37,9 @@ for i = 0, 62 do
             local ai = Players[i]:GetDiplomaticAI()
             local stateIdx = ai:GetDiplomaticStateIndex(me)
             local stateName = states[stateIdx + 1] or tostring(stateIdx)
-            local grievances = pDiplo:GetGrievancesAgainst(i)
+            -- Grievances are Gathering Storm only
+            local grievances = 0
+            pcall(function() grievances = pDiplo:GetGrievancesAgainst(i) or 0 end)
             local vis = pDiplo:GetVisibilityOn(i)
             local hasDel = pDiplo:HasDelegationAt(i) and "1" or "0"
             local hasEmb = pDiplo:HasEmbassyAt(i) and "1" or "0"
@@ -55,8 +57,11 @@ for i = 0, 62 do
                     local ecName = Locale.Lookup(ec:GetName())
                     local ecPop = ec:GetPopulation()
                     local ecLoy, ecLoyPT = 100, 0
-                    local ecCult = ec:GetCulturalIdentity()
-                    if ecCult then ecLoy = ecCult:GetLoyalty(); ecLoyPT = ecCult:GetLoyaltyPerTurn() end
+                    -- Loyalty is Rise and Fall+
+                    pcall(function()
+                        local ecCult = ec:GetCulturalIdentity()
+                        if ecCult then ecLoy = ecCult:GetLoyalty(); ecLoyPT = ecCult:GetLoyaltyPerTurn() end
+                    end)
                     local ecWalls, ecDef = 0, 0
                     pcall(function()
                         for _, d in ec:GetDistricts():Members() do

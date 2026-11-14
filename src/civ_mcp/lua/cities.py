@@ -128,13 +128,16 @@ for i, c in Players[me]:GetCities():Members() do
     end end
     table.insert(cityCoords, {name=nm, x=c:GetX(), y=c:GetY()})
     local loy, loyMax, loyPT, loyFlip = 100, 100, 0, 0
-    local cult = c:GetCulturalIdentity()
-    if cult then
-        loy = cult:GetLoyalty()
-        loyMax = cult:GetMaxLoyalty()
-        loyPT = cult:GetLoyaltyPerTurn()
-        loyFlip = cult:GetTurnsToConversion()
-    end
+    -- Loyalty is Rise and Fall+; the base game has no GetCulturalIdentity
+    pcall(function()
+        local cult = c:GetCulturalIdentity()
+        if cult then
+            loy = cult:GetLoyalty()
+            loyMax = cult:GetMaxLoyalty()
+            loyPT = cult:GetLoyaltyPerTurn()
+            loyFlip = cult:GetTurnsToConversion()
+        end
+    end)
     local garrisonUnit = ""
     local garFound = false
     local garUnitsAt = Map.GetUnitsAt(c:GetX(), c:GetY())
