@@ -441,6 +441,19 @@ async def _logged(
     # Mark the call in flight so the idle watcher keeps the tuner connection open
     modes.enter()
     try:
+        if modes.MODE:
+            # Logs and diary rows are buffered in memory until the logger knows which game
+            # this is, and upstream only binds it in get_game_overview. A session that
+            # resumes without calling that would never write anything, so bind on any call.
+            try:
+                _lg = _get_logger(ctx)
+                if not _lg.bound:
+                    _civ, _seed = await _get_game(ctx).get_game_identity()
+                    _lg.bind_game(_civ, _seed)
+                    _get_spatial(ctx).bind_game(_civ, _seed)
+                    heartbeat.bind_game(_civ, _seed)
+            except Exception:
+                log.debug("Lazy game bind failed", exc_info=True)
         result = await _logged_inner(ctx, tool_name, params, fn, tiles=tiles)
     finally:
         modes.leave()
