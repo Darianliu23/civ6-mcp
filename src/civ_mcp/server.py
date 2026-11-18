@@ -28,6 +28,7 @@ from civ_mcp.diary import (
     format_diary_entry as _format_diary_entry,
     merge_agent_reflections as _merge_agent_reflections,
     read_diary_entries as _read_diary_entries,
+    read_game_agent_entries as _read_game_agent_entries,
 )
 from civ_mcp.game_state import GameState
 from civ_mcp.logger import GameLogger
@@ -2307,18 +2308,12 @@ async def get_diary(
     except Exception:
         return "Could not detect current game. Is the game running?"
 
-    run_id = _get_logger(ctx).session_id
-    path = _diary_path(civ_type, seed, run_id)
-    if not path.exists():
-        return f"No diary entries yet for this game ({civ_type}, seed {seed})."
-
-    entries = _read_diary_entries(path)
+    # Read every run's diary for this game, not just this server process's file:
+    # each session / restart gets a new run_id, and memory must carry across them.
+    # Agent rows only (v2 has one row per player per turn); one row per turn.
+    entries = _read_game_agent_entries(civ_type, seed)
     if not entries:
         return f"No diary entries yet for this game ({civ_type}, seed {seed})."
-
-    # New format (v2) has N rows per turn — filter to agent rows only.
-    # Old format entries (no "v" key) pass through unchanged.
-    entries = [e for e in entries if "v" not in e or e.get("is_agent")]
 
     # Filter by query mode
     if turn is not None:

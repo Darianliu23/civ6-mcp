@@ -17,6 +17,41 @@ def diary_path(civ: str, seed: int, run_id: str) -> Path:
     return DIARY_DIR / f"diary_{civ}_{seed}_{run_id}.jsonl"
 
 
+def game_diary_paths(civ: str, seed: int) -> list[Path]:
+    """Every diary file for one game, oldest first.
+
+    Each server process gets a new run_id, so a game played across several
+    sessions (or server restarts) is split over several files.
+    """
+    prefix = f"diary_{civ}_{seed}_"
+    paths = [
+        p
+        for p in DIARY_DIR.glob(f"{prefix}*.jsonl")
+        if not p.name.endswith("_cities.jsonl")
+    ]
+    return sorted(paths, key=lambda p: p.stat().st_mtime)
+
+
+def read_game_agent_entries(civ: str, seed: int) -> list[dict]:
+    """The agent's diary rows for one game across all runs, one per turn, by turn.
+
+    When a turn was played more than once (a reload, or two sessions), the
+    row from the most recently written file wins.
+    """
+    by_turn: dict[int, dict] = {}
+    legacy: list[dict] = []
+    for path in game_diary_paths(civ, seed):
+        for e in read_diary_entries(path):
+            if "v" in e and not e.get("is_agent"):
+                continue
+            turn = e.get("turn")
+            if isinstance(turn, int):
+                by_turn[turn] = e
+            else:
+                legacy.append(e)
+    return legacy + [by_turn[t] for t in sorted(by_turn)]
+
+
 def merge_agent_reflections(
     path: Path, turn: int, new_reflections: dict
 ) -> dict | None:
@@ -28,7 +63,7 @@ def merge_agent_reflections(
     """
     if not path.exists():
         return None
-    lines = path.read_text().strip().splitlines()
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
     target_idx = None
     for i in range(len(lines) - 1, -1, -1):
         try:
@@ -51,7 +86,7 @@ def merge_agent_reflections(
     row["reflections"] = existing
     lines[target_idx] = json.dumps(row, separators=(",", ":"))
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return row
 
@@ -60,7 +95,7 @@ def read_diary_entries(path: Path) -> list[dict]:
     if not path.exists():
         return []
     entries = []
-    for line in path.read_text().strip().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").strip().splitlines():
         try:
             entries.append(json.loads(line))
         except json.JSONDecodeError:
