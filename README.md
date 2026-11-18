@@ -2,7 +2,7 @@
 
 > **About this fork / 关于这个分叉** — branch `base-game-compat`
 >
-> This is a fork of [lmwilki/civ6-mcp](https://github.com/lmwilki/civ6-mcp) used by the DSH plugin [dsh-civ6-whale](https://github.com/Darianliu23/dsh-civ6-whale). Everything below this box is the upstream README. Changes on this branch:
+> This is a fork of [lmwilki/civ6-mcp](https://github.com/lmwilki/civ6-mcp) used by the DSH plugin [dsh-civ6](https://github.com/Darianliu23/dsh-civ6). Everything below this box is the upstream README. Changes on this branch:
 >
 > - **Base game (no expansions)**: queries that called Rise and Fall / Gathering Storm–only APIs (era score, loyalty, favor, resource stockpiles, grievances, victory points) fall back to defaults instead of raising Lua errors; governor / dedication / World Congress queries return empty results. `CIV_MCP_BASE_GAME=1` also hides those tools.
 > - **Play modes for a human at the keyboard** (`CIV_MCP_MODE=auto|advisor|coop`, see `src/civ_mcp/modes.py`): `advisor` exposes read-only tools only; `auto` and `coop` add a `set_control` tool — once the player takes over, every tool that changes the game is refused. Lifecycle tools (launch / kill / load save / `run_lua`) are hidden. The server instructions become a Chinese mode intro followed by `AGENTS.md`.
@@ -14,7 +14,7 @@
 >
 > Tested on Windows 11 with the base game only. Without `CIV_MCP_MODE` the server behaves as upstream.
 >
-> 这是 [lmwilki/civ6-mcp](https://github.com/lmwilki/civ6-mcp) 的分叉，给 DSH 插件 [dsh-civ6-whale](https://github.com/Darianliu23/dsh-civ6-whale) 用。改动在 `base-game-compat` 分支：原版规则兼容、三种有人在场的玩法和接管开关、有人在玩时绝不杀游戏或读档、多个进程轮流共用调试连接、结束回合自动关顾问弹窗、日记跨会话合并读取。只在 Windows 11 + 原版文明6 上测过。
+> 这是 [lmwilki/civ6-mcp](https://github.com/lmwilki/civ6-mcp) 的分叉，给 DSH 插件 [dsh-civ6](https://github.com/Darianliu23/dsh-civ6) 用。改动在 `base-game-compat` 分支：原版规则兼容、三种有人在场的玩法和接管开关、有人在玩时绝不杀游戏或读档、多个进程轮流共用调试连接、结束回合自动关顾问弹窗、日记跨会话合并读取。只在 Windows 11 + 原版文明6 上测过。
 
 An MCP server that lets LLM agents play full games of Civilization VI.
 
