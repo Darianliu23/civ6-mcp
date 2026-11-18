@@ -490,6 +490,52 @@ def _check_save_scumming(gs: GameState) -> tuple[list[lq.TurnEvent], bool]:
     return events, False
 
 
+class _SkipCanEndTurn(Exception):
+    """Internal: skip the UI.CanEndTurn override for a verified blocker."""
+
+
+def _format_blockers(blockers: list[tuple[str, str]]) -> str:
+    lines_out: list[str] = ["Cannot end turn — resolve these blockers:"]
+    for bt, bm in blockers:
+        hint = lq.BLOCKING_TOOL_MAP.get(bt, "Resolve the blocking notification")
+        display = bt.replace("ENDTURN_BLOCKING_", "").replace("_", " ").title()
+        line = f"  - {display}"
+        if bm:
+            line += f" ({bm})"
+        line += f"  ->  {hint}"
+        lines_out.append(line)
+    return "\n".join(lines_out)
+
+
+async def _local_turn_inactive(gs: GameState, tries: int = 3) -> bool:
+    """True once the local player's turn is no longer active (GameCore query only).
+
+    Polls a few times, two seconds apart. A failed query counts as "inactive"
+    so this never turns a working end_turn into an error.
+    """
+    lua = (
+        "local p = Players[Game.GetLocalPlayer()] "
+        'print((p and p:IsTurnActive()) and "ACTIVE" or "INACTIVE") '
+        f'print("{lq.SENTINEL}")'
+    )
+    for attempt in range(tries):
+        if attempt:
+            await asyncio.sleep(2.0)
+        # Fast AI turns: the next turn may already have started, and then it is
+        # (correctly) the local player's turn again. Check the turn number first.
+        turn_now = await _get_turn_number(gs)
+        start = gs._pending_end_turn_from
+        if turn_now is not None and start is not None and turn_now > start:
+            return True
+        try:
+            lines = await gs.conn.execute_read(lua)
+        except Exception:
+            return True
+        if not any(l.strip() == "ACTIVE" for l in lines):
+            return True
+    return False
+
+
 async def _close_advisor(gs: GameState) -> bool:
     """Close the tutorial advisor popup if it is up. Never raises."""
     try:
@@ -1083,7 +1129,15 @@ async def execute_end_turn(gs: GameState) -> str:
 
                 # Ask the game if turn can actually end despite our blockers.
                 # Safe here — we haven't started AI processing yet (pre-end-turn phase).
+                # Not for a units blocker: we just verified that units still have moves,
+                # and UI.CanEndTurn() has answered true in that state (base game), which
+                # made end_turn send a request the game ignored and then wait 10 minutes.
+                verified_units = any(
+                    bt == "ENDTURN_BLOCKING_UNITS" for bt, _ in hard_blockers
+                )
                 try:
+                    if verified_units:
+                        raise _SkipCanEndTurn()
                     can_end_lines = await gs.conn.execute_write(
                         f"local can = UI.CanEndTurn(); "
                         f'print(can and "CAN_END" or "CANNOT_END"); '
@@ -1095,23 +1149,12 @@ async def execute_end_turn(gs: GameState) -> str:
                             [bt for bt, _ in hard_blockers],
                         )
                         break  # fall through to end_turn request
+                except _SkipCanEndTurn:
+                    pass
                 except Exception:
                     log.debug("UI.CanEndTurn check failed", exc_info=True)
 
-                lines_out: list[str] = ["Cannot end turn — resolve these blockers:"]
-                for bt, bm in hard_blockers:
-                    hint = lq.BLOCKING_TOOL_MAP.get(
-                        bt, "Resolve the blocking notification"
-                    )
-                    display = (
-                        bt.replace("ENDTURN_BLOCKING_", "").replace("_", " ").title()
-                    )
-                    line = f"  - {display}"
-                    if bm:
-                        line += f" ({bm})"
-                    line += f"  ->  {hint}"
-                    lines_out.append(line)
-                return "\n".join(lines_out)
+                return _format_blockers(hard_blockers)
 
             # All blockers were soft-resolved — loop to re-check
             if resolved_any:
@@ -1189,6 +1232,31 @@ async def execute_end_turn(gs: GameState) -> str:
         # An advisor popup raised during another player's turn freezes turn processing
         if _i % 2 == 1:
             await _close_advisor(gs)
+
+    # Did the game accept the request at all? Once it does, the local player's
+    # turn goes inactive while the other civs move. Still active after a few
+    # seconds means the request was ignored (a blocker the checks above missed):
+    # report it now instead of polling for 10 minutes.
+    if not advanced and not await _local_turn_inactive(gs, tries=3):
+        try:
+            blocking_lines = await gs.conn.execute_write(
+                lq.build_end_turn_blocking_query()
+            )
+            blockers = lq.parse_end_turn_blocking(blocking_lines)
+        except Exception:
+            log.debug("Post-request blocker check failed", exc_info=True)
+            blockers = []
+        gs._pending_end_turn = False
+        gs._pending_end_turn_from = None
+        if blockers:
+            log.info("End turn request ignored; blockers: %s", [b for b, _ in blockers])
+            return _format_blockers(blockers)
+        return (
+            f"End turn request was not accepted (still your turn {turn_before}), "
+            "and no blocking notification was found. Check for an open popup "
+            "(dismiss_popup), units that still need orders (skip_remaining_units), "
+            "or a choice the game is waiting for (get_notifications), then call end_turn again."
+        )
 
     # Phase 2: Slow polling (5 min) — AI can take 1-5 min on large maps,
     # especially during wars with many units. GameCore-only queries.
